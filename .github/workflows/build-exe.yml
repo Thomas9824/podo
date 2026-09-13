@@ -1,0 +1,76 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Next.js (standalone)
+        run: pnpm build
+
+      - name: Copy static assets into standalone
+        shell: cmd
+        run: |
+          xcopy /e /i /y ".next\static" ".next\standalone\.next\static"
+          xcopy /e /i /y "public" ".next\standalone\public"
+
+      - name: Copy launcher into standalone
+        shell: cmd
+        run: copy launcher.js .next\standalone\launcher.js
+
+      - name: Install pkg
+        run: npm install -g @yao-pkg/pkg
+
+      - name: Build EXE
+        shell: cmd
+        run: |
+          mkdir dist 2>nul || true
+          pkg .next\standalone\launcher.js --targets node18-win-x64 --output dist\dashboard.exe
+
+      - name: Upload EXE as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-windows-exe
+          path: dist/dashboard.exe
+          retention-days: 30
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "Dashboard Revenus Podologue — Windows"
+          body: |
+            ## 📥 Télécharger et utiliser
+
+            1. Télécharger **dashboard.exe** ci-dessous
+            2. Double-cliquer dessus
+            3. Le navigateur s'ouvre automatiquement sur le dashboard
+
+            > ⚠️ Windows peut afficher un avertissement "SmartScreen" car l'exe n'est pas signé.
+            > Cliquez sur **"Informations complémentaires" → "Exécuter quand même"**.
+
+            Aucune installation requise. Node.js est inclus dans l'exe.
+          files: dist/dashboard.exe
+          make_latest: true
