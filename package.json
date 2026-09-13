@@ -46,5 +46,8 @@
   },
   "overrides": {
     "hono": "4.12.25"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["@img/sharp-win32-x64", "@img/sharp-darwin-arm64", "@img/sharp-linux-x64", "esbuild"]
   }
 }
