@@ -99,11 +99,10 @@ poll(60);
 @echo off
 cd /d "%~dp0"
 echo Demarrage du dashboard...
-start "" /b "%~dp0node\node.exe" "%~dp0server\launcher.js"
-echo Attente du serveur (10 secondes)...
-timeout /t 10 /nobreak
-start "" "http://localhost:3000"
-echo Si le navigateur ne s ouvre pas, allez sur http://localhost:3000
+echo.
+"%~dp0node\node.exe" "%~dp0server\launcher.js"
+echo.
+echo Le serveur s est arrete. Code erreur : %errorlevel%
 pause
 '@ | Set-Content -Encoding ascii "app\Demarrer.bat"
 
