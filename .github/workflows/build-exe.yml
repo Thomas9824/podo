@@ -42,30 +42,81 @@ jobs:
           $url = "https://nodejs.org/dist/v20.19.4/node-v20.19.4-win-x64.zip"
           Invoke-WebRequest -Uri $url -OutFile node-win.zip
           Expand-Archive -Path node-win.zip -DestinationPath node-win-extracted
-          Move-Item node-win-extracted\node-v20.19.4-win-x64 node-portable
+          Move-Item "node-win-extracted\node-v20.19.4-win-x64" "node-portable"
 
       - name: Create app folder structure
-        shell: cmd
-        run: |
-          mkdir app
-          xcopy /e /i /y ".next\standalone" "app\server"
-          copy launcher.js app\server\launcher.js
-          mkdir app\node
-          xcopy /e /i /y "node-portable" "app\node"
-
-      - name: Create dashboard.bat launcher
-        shell: cmd
-        run: |
-          echo @echo off > app\dashboard.bat
-          echo start "" /b "%~dp0node\node.exe" "%~dp0server\launcher.js" >> app\dashboard.bat
-          echo timeout /t 4 /nobreak >nul >> app\dashboard.bat
-          echo start "" "http://localhost:3000" >> app\dashboard.bat
-
-      - name: Compile dashboard.exe from bat using Bat To Exe Converter (go wrapper)
         shell: pwsh
         run: |
-          # Crée un wrapper Go minimaliste qui lance le serveur et ouvre le navigateur
-          $go_code = @'
+          New-Item -ItemType Directory -Path "app" -Force
+          Copy-Item -Recurse -Force ".next\standalone\*" "app\server\"
+          Copy-Item -Force "launcher.js" "app\server\launcher.js"
+          New-Item -ItemType Directory -Path "app\node" -Force
+          Copy-Item -Recurse -Force "node-portable\*" "app\node\"
+
+      - name: Write launcher script (debug version with log)
+        shell: pwsh
+        run: |
+          $launcher = @'
+          const { spawn } = require('child_process');
+          const http = require('http');
+          const path = require('path');
+          const { exec } = require('child_process');
+          const fs = require('fs');
+
+          const PORT = 3000;
+          const URL = 'http://localhost:' + PORT;
+
+          // Chemin absolu depuis l emplacement du script
+          const base = __dirname;
+          const serverScript = path.join(base, 'server.js');
+
+          if (!fs.existsSync(serverScript)) {
+            const msg = '[ERREUR] server.js introuvable dans : ' + base + '\nContenu : ' + fs.readdirSync(base).join(', ');
+            fs.writeFileSync(path.join(base, 'error.log'), msg);
+            process.exit(1);
+          }
+
+          const server = spawn(process.execPath, [serverScript], {
+            env: { ...process.env, PORT: String(PORT), HOSTNAME: '127.0.0.1', NODE_ENV: 'production' },
+            stdio: 'ignore',
+            detached: true,
+            cwd: base,
+          });
+          server.unref();
+
+          let opened = false;
+          function waitForServer(retries) {
+            if (retries <= 0) return;
+            http.get(URL, (res) => {
+              if (!opened) {
+                opened = true;
+                exec('start "" "' + URL + '"');
+              }
+            }).on('error', () => {
+              setTimeout(() => waitForServer(retries - 1), 600);
+            });
+          }
+
+          waitForServer(50);
+          '@
+          $launcher | Out-File -Encoding utf8 "app\server\launcher.js"
+
+      - name: Create Demarrer.bat (fallback visible)
+        shell: pwsh
+        run: |
+          $bat = @'
+          @echo off
+          cd /d "%~dp0"
+          start "" /b "node\node.exe" "server\launcher.js"
+          timeout /t 5 /nobreak >nul
+          start "" "http://localhost:3000"
+          '@
+          $bat | Out-File -Encoding ascii "app\Demarrer.bat"
+
+      - name: Write Go source for dashboard.exe
+        shell: pwsh
+        run: |
+          $go_src = @'
           package main
 
           import (
@@ -73,63 +124,84 @@ jobs:
             "os"
             "os/exec"
             "path/filepath"
+            "runtime"
             "time"
           )
 
-          func main() {
-            exeDir, _ := filepath.Abs(filepath.Dir(os.Args[0]))
-            nodeExe  := filepath.Join(exeDir, "node", "node.exe")
-            serverJs := filepath.Join(exeDir, "server", "launcher.js")
+          func exeDir() string {
+            exe, err := os.Executable()
+            if err != nil {
+              return "."
+            }
+            resolved, err := filepath.EvalSymlinks(exe)
+            if err != nil {
+              resolved = exe
+            }
+            return filepath.Dir(resolved)
+          }
 
-            cmd := exec.Command(nodeExe, serverJs)
-            cmd.Dir = filepath.Join(exeDir, "server")
+          func main() {
+            dir := exeDir()
+            nodeExe := filepath.Join(dir, "node", "node.exe")
+            serverJS := filepath.Join(dir, "server", "launcher.js")
+
+            cmd := exec.Command(nodeExe, serverJS)
+            cmd.Dir = filepath.Join(dir, "server")
             cmd.Start()
 
-            for i := 0; i < 40; i++ {
-              time.Sleep(500 * time.Millisecond)
-              resp, err := http.Get("http://localhost:3000")
+            url := "http://localhost:3000"
+            for i := 0; i < 50; i++ {
+              time.Sleep(600 * time.Millisecond)
+              resp, err := http.Get(url)
               if err == nil {
                 resp.Body.Close()
-                exec.Command("cmd", "/c", "start", "", "http://localhost:3000").Start()
+                switch runtime.GOOS {
+                case "windows":
+                  exec.Command("cmd", "/c", "start", "", url).Start()
+                }
                 break
               }
             }
-
-            // Garde le processus vivant
             select {}
           }
           '@
-          $go_code | Out-File -Encoding utf8 main.go
+          $go_src | Out-File -Encoding utf8 "main.go"
 
-          # Télécharge Go si absent
-          $gozip = "go1.22.5.windows-amd64.zip"
-          Invoke-WebRequest -Uri "https://go.dev/dl/$gozip" -OutFile $gozip
-          Expand-Archive -Path $gozip -DestinationPath go-install
-          $env:PATH = "$PWD\go-install\go\bin;$env:PATH"
-          go build -ldflags "-H windowsgui" -o app\dashboard.exe main.go
-
-      - name: Zip the app folder
+      - name: Build dashboard.exe with Go (pre-installed on runner)
         shell: pwsh
         run: |
-          Compress-Archive -Path app\* -DestinationPath dashboard-windows.zip
+          go build -ldflags="-H windowsgui" -o "app\dashboard.exe" main.go
 
-      - name: Create or update GitHub Release
+      - name: Zip app folder
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "app\*" -DestinationPath "dashboard-windows.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-windows
+          path: dashboard-windows.zip
+          retention-days: 30
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
           name: "Dashboard Revenus Podologue — Windows"
           body: |
-            ## 📥 Installation (30 secondes)
+            ## 📥 Installation
 
             1. Télécharger **dashboard-windows.zip**
-            2. Faire un clic droit → **Extraire tout** → choisir un dossier (ex: Bureau)
+            2. Clic droit → **Extraire tout** → sur le Bureau par exemple
             3. Ouvrir le dossier extrait
-            4. Double-cliquer sur **dashboard.exe**
-            5. Le navigateur s'ouvre automatiquement ✅
+            4. Double-cliquer **dashboard.exe**
+            5. Le navigateur s'ouvre sur le dashboard ✅
 
-            > ⚠️ Windows SmartScreen peut bloquer au premier lancement.
-            > Cliquez **"Informations complémentaires" → "Exécuter quand même"**.
+            > Si Windows bloque : **"Informations complémentaires" → "Exécuter quand même"**
+            >
+            > Si dashboard.exe ne fonctionne pas : double-cliquer **Demarrer.bat** à la place.
 
-            **Aucune installation requise.** Node.js est inclus dans le zip.
+            Node.js est inclus — aucune installation requise.
           files: dashboard-windows.zip
           make_latest: true
