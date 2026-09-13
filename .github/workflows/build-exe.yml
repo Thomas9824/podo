@@ -45,12 +45,13 @@ jobs:
           Move-Item "node-win-extracted\node-v20.19.4-win-x64" "node-portable"
 
       - name: Create app folder structure
-        shell: pwsh
+        shell: cmd
         run: |
-          New-Item -ItemType Directory -Path "app\server" -Force
-          New-Item -ItemType Directory -Path "app\node" -Force
-          Copy-Item -Recurse -Force ".next\standalone\*" "app\server\"
-          Copy-Item -Recurse -Force "node-portable\*" "app\node\"
+          mkdir app\server
+          mkdir app\node
+          robocopy ".next\standalone" "app\server" /e /nfl /ndl /njh /njs
+          robocopy "node-portable" "app\node" /e /nfl /ndl /njh /njs
+          exit /b 0
 
       - name: Write launcher script (debug version with log)
         shell: pwsh
