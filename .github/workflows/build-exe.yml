@@ -90,7 +90,17 @@ jobs:
           with open(r'app\server\launcher.js', 'w', encoding='utf-8') as f:
               f.write(launcher)
 
-          bat = "@echo off\r\ncd /d \"%~dp0\"\r\necho Demarrage du dashboard...\r\n\"%~dp0node\\node.exe\" \"%~dp0server\\launcher.js\"\r\necho.\r\necho Arret - code erreur: %errorlevel%\r\npause\r\n"
+          bat = (
+              "@echo off\r\n"
+              "cd /d \"%~dp0\"\r\n"
+              "echo Lancement du serveur Next.js...\r\n"
+              "echo (cette fenetre doit rester ouverte)\r\n"
+              "echo.\r\n"
+              "\"%~dp0node\\node.exe\" \"%~dp0server\\server.js\"\r\n"
+              "echo.\r\n"
+              "echo === SERVEUR ARRETE - CODE: %errorlevel% ===\r\n"
+              "pause\r\n"
+          )
           with open(r'app\Demarrer.bat', 'w', encoding='ascii') as f:
               f.write(bat)
 
