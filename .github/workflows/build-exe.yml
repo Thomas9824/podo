@@ -27,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile --ignore-scripts
 
-      - name: Build Next.js (standalone)
+      - name: Build Next.js standalone
         run: pnpm build
 
       - name: Copy static assets into standalone
@@ -36,14 +36,14 @@ jobs:
           xcopy /e /i /y ".next\static" ".next\standalone\.next\static"
           xcopy /e /i /y "public" ".next\standalone\public"
 
-      - name: Download Node.js portable (win-x64)
+      - name: Download Node.js portable
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "https://nodejs.org/dist/v20.19.4/node-v20.19.4-win-x64.zip" -OutFile node-win.zip
-          Expand-Archive -Path node-win.zip -DestinationPath node-win-extracted
-          Move-Item "node-win-extracted\node-v20.19.4-win-x64" "node-portable"
+          Invoke-WebRequest "https://nodejs.org/dist/v20.19.4/node-v20.19.4-win-x64.zip" -OutFile node.zip
+          Expand-Archive node.zip -DestinationPath node-tmp
+          Move-Item "node-tmp\node-v20.19.4-win-x64" "node-portable"
 
-      - name: Assemble app folder with robocopy
+      - name: Assemble app folder
         shell: cmd
         run: |
           mkdir app\server
@@ -52,68 +52,25 @@ jobs:
           robocopy "node-portable" "app\node" /e /nfl /ndl /njh /njs
           exit /b 0
 
-      - name: Write launcher.js into app\server
+      - name: Write launcher.js
         shell: pwsh
         run: |
-          @'
-const { spawn } = require('child_process');
-const http = require('http');
-const path = require('path');
-const { exec } = require('child_process');
-const fs = require('fs');
-
-const PORT = 3000;
-const base = __dirname;
-const serverScript = path.join(base, 'server.js');
-
-if (!fs.existsSync(serverScript)) {
-  fs.writeFileSync(path.join(base, 'error.log'),
-    'server.js introuvable dans : ' + base + '\n' +
-    'Contenu : ' + fs.readdirSync(base).join(', '));
-  process.exit(1);
-}
-
-const srv = spawn(process.execPath, [serverScript], {
-  env: { ...process.env, PORT: String(PORT), HOSTNAME: '127.0.0.1', NODE_ENV: 'production' },
-  stdio: 'ignore',
-  detached: true,
-  cwd: base,
-});
-srv.unref();
-
-let done = false;
-function poll(n) {
-  if (done || n <= 0) return;
-  http.get('http://localhost:' + PORT, () => {
-    done = true;
-    exec('start "" "http://localhost:' + PORT + '"');
-  }).on('error', () => setTimeout(() => poll(n - 1), 700));
-}
-poll(60);
-'@ | Set-Content -Encoding utf8 "app\server\launcher.js"
+          $content = "const{spawn}=require('child_process'),http=require('http'),path=require('path'),{exec}=require('child_process'),fs=require('fs');const PORT=3000,base=__dirname,srv=path.join(base,'server.js');if(!fs.existsSync(srv)){fs.writeFileSync(path.join(base,'error.log'),'server.js manquant dans '+base+' contenu: '+fs.readdirSync(base).join(', '));process.exit(1);}const s=spawn(process.execPath,[srv],{env:{...process.env,PORT:String(PORT),HOSTNAME:'127.0.0.1',NODE_ENV:'production'},stdio:'ignore',detached:true,cwd:base});s.unref();let ok=false;function poll(n){if(ok||n<=0)return;http.get('http://localhost:'+PORT,()=>{ok=true;exec('start \"\" \"http://localhost:'+PORT+'\"');}).on('error',()=>setTimeout(()=>poll(n-1),700));}poll(60);"
+          Set-Content -Path "app\server\launcher.js" -Value $content -Encoding utf8
 
       - name: Write Demarrer.bat
         shell: pwsh
         run: |
-          @'
-@echo off
-cd /d "%~dp0"
-echo Demarrage du dashboard...
-echo.
-"%~dp0node\node.exe" "%~dp0server\launcher.js"
-echo.
-echo Le serveur s est arrete. Code erreur : %errorlevel%
-pause
-'@ | Set-Content -Encoding ascii "app\Demarrer.bat"
+          $bat = "@echo off`r`ncd /d `"%~dp0`"`r`necho Demarrage...`r`n`"%~dp0node\node.exe`" `"%~dp0server\launcher.js`"`r`necho Arret - code: %errorlevel%`r`npause"
+          Set-Content -Path "app\Demarrer.bat" -Value $bat -Encoding ascii
 
-      - name: Write Go source
+      - name: Write Go main.go
         shell: pwsh
         run: |
-          @'
+          $go = @"
 package main
 
 import (
-	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -122,32 +79,13 @@ import (
 )
 
 func main() {
-	exe, err := os.Executable()
-	if err != nil {
-		fmt.Println("Erreur:", err)
-		time.Sleep(5 * time.Second)
-		return
-	}
+	exe, _ := os.Executable()
 	dir := filepath.Dir(exe)
-	nodeExe := filepath.Join(dir, "node", "node.exe")
-	serverJS := filepath.Join(dir, "server", "launcher.js")
-
-	// Verifie que les fichiers existent
-	for _, f := range []string{nodeExe, serverJS} {
-		if _, err := os.Stat(f); os.IsNotExist(err) {
-			msg := "Fichier manquant: " + f
-			exec.Command("cmd", "/c", "echo "+msg+" && pause").Run()
-			return
-		}
-	}
-
-	cmd := exec.Command(nodeExe, serverJS)
+	node := filepath.Join(dir, "node", "node.exe")
+	js := filepath.Join(dir, "server", "launcher.js")
+	cmd := exec.Command(node, js)
 	cmd.Dir = filepath.Join(dir, "server")
-	if err := cmd.Start(); err != nil {
-		exec.Command("cmd", "/c", "echo Erreur lancement node: "+err.Error()+" && pause").Run()
-		return
-	}
-
+	cmd.Start()
 	url := "http://localhost:3000"
 	for i := 0; i < 60; i++ {
 		time.Sleep(700 * time.Millisecond)
@@ -160,9 +98,10 @@ func main() {
 	}
 	select {}
 }
-'@ | Set-Content -Encoding utf8 "main.go"
+"@
+          Set-Content -Path "main.go" -Value $go -Encoding utf8
 
-      - name: Build dashboard.exe (Go, no console window)
+      - name: Build dashboard.exe
         shell: pwsh
         run: |
           go build -ldflags="-H windowsgui" -o "app\dashboard.exe" main.go
@@ -185,18 +124,17 @@ func main() {
           tag_name: latest
           name: "Dashboard Revenus Podologue — Windows"
           body: |
-            ## 📥 Installation
+            ## Installation
 
-            1. Télécharger **dashboard-windows.zip**
-            2. Clic droit → **Extraire tout** → Bureau par exemple
+            1. Telecharger **dashboard-windows.zip**
+            2. Clic droit -> Extraire tout -> Bureau
             3. Ouvrir le dossier extrait
             4. Double-cliquer **dashboard.exe**
-            5. Le navigateur s'ouvre ✅
+            5. Le navigateur s ouvre automatiquement
 
-            > Si Windows bloque : **"Informations complémentaires" → "Exécuter quand même"**
-            >
-            > ⚠️ Si **dashboard.exe** ne fait rien : double-cliquer **Demarrer.bat** à la place (affiche les erreurs).
+            Si Windows bloque : Informations complementaires -> Executer quand meme
+            Si dashboard.exe ne marche pas : double-cliquer Demarrer.bat
 
-            Node.js inclus — aucune installation requise.
+            Node.js inclus - aucune installation requise.
           files: dashboard-windows.zip
           make_latest: true
