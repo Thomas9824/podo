@@ -47,10 +47,9 @@ jobs:
       - name: Create app folder structure
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Path "app" -Force
-          Copy-Item -Recurse -Force ".next\standalone\*" "app\server\"
-          Copy-Item -Force "launcher.js" "app\server\launcher.js"
+          New-Item -ItemType Directory -Path "app\server" -Force
           New-Item -ItemType Directory -Path "app\node" -Force
+          Copy-Item -Recurse -Force ".next\standalone\*" "app\server\"
           Copy-Item -Recurse -Force "node-portable\*" "app\node\"
 
       - name: Write launcher script (debug version with log)
