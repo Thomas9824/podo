@@ -1,0 +1,179 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile --ignore-scripts
+
+      - name: Build Next.js standalone
+        run: pnpm build
+
+      - name: Copy static assets into standalone
+        shell: cmd
+        run: |
+          xcopy /e /i /y ".next\static" ".next\standalone\.next\static"
+          xcopy /e /i /y "public" ".next\standalone\public"
+
+      - name: Download Node.js portable
+        shell: pwsh
+        run: |
+          Invoke-WebRequest "https://nodejs.org/dist/v20.19.4/node-v20.19.4-win-x64.zip" -OutFile node.zip
+          Expand-Archive node.zip -DestinationPath node-tmp
+          Move-Item "node-tmp\node-v20.19.4-win-x64" "node-portable"
+
+      - name: Assemble app folder
+        shell: cmd
+        run: |
+          mkdir app\server
+          mkdir app\node
+          robocopy ".next\standalone" "app\server" /e /nfl /ndl /njh /njs
+          robocopy "node-portable" "app\node" /e /nfl /ndl /njh /njs
+          exit /b 0
+
+      - name: Write launcher.js and Demarrer.bat
+        shell: python
+        run: |
+          import os
+
+          launcher = r"""
+          const { spawn } = require('child_process');
+          const http = require('http');
+          const path = require('path');
+          const { exec } = require('child_process');
+          const fs = require('fs');
+          const PORT = 3000;
+          const base = __dirname;
+          const serverScript = path.join(base, 'server.js');
+          if (!fs.existsSync(serverScript)) {
+            fs.writeFileSync(path.join(base, 'error.log'),
+              'server.js manquant dans: ' + base + '\nContenu: ' + fs.readdirSync(base).join(', '));
+            process.exit(1);
+          }
+          const srv = spawn(process.execPath, [serverScript], {
+            env: { ...process.env, PORT: String(PORT), HOSTNAME: '127.0.0.1', NODE_ENV: 'production' },
+            stdio: 'ignore', detached: true, cwd: base
+          });
+          srv.unref();
+          let ok = false;
+          function poll(n) {
+            if (ok || n <= 0) return;
+            http.get('http://localhost:' + PORT, function() {
+              ok = true;
+              exec('start "" "http://localhost:' + PORT + '"');
+            }).on('error', function() { setTimeout(function() { poll(n - 1); }, 700); });
+          }
+          poll(60);
+          """.strip()
+
+          with open(r'app\server\launcher.js', 'w', encoding='utf-8') as f:
+              f.write(launcher)
+
+          bat = (
+              "@echo off\r\n"
+              "cd /d \"%~dp0\"\r\n"
+              "echo Lancement du serveur Next.js...\r\n"
+              "echo (cette fenetre doit rester ouverte)\r\n"
+              "echo.\r\n"
+              "\"%~dp0node\\node.exe\" \"%~dp0server\\server.js\"\r\n"
+              "echo.\r\n"
+              "echo === SERVEUR ARRETE - CODE: %errorlevel% ===\r\n"
+              "pause\r\n"
+          )
+          with open(r'app\Demarrer.bat', 'w', encoding='ascii') as f:
+              f.write(bat)
+
+          print("launcher.js and Demarrer.bat written successfully")
+
+      - name: Write Go main.go
+        shell: python
+        run: |
+          go_src = r"""package main
+
+          import (
+          	"net/http"
+          	"os"
+          	"os/exec"
+          	"path/filepath"
+          	"time"
+          )
+
+          func main() {
+          	exe, _ := os.Executable()
+          	dir := filepath.Dir(exe)
+          	node := filepath.Join(dir, "node", "node.exe")
+          	js := filepath.Join(dir, "server", "launcher.js")
+          	cmd := exec.Command(node, js)
+          	cmd.Dir = filepath.Join(dir, "server")
+          	cmd.Start()
+          	url := "http://localhost:3000"
+          	for i := 0; i < 60; i++ {
+          		time.Sleep(700 * time.Millisecond)
+          		resp, err := http.Get(url)
+          		if err == nil {
+          			resp.Body.Close()
+          			exec.Command("cmd", "/c", "start", "", url).Start()
+          			break
+          		}
+          	}
+          	select {}
+          }
+          """
+
+          import textwrap
+          go_src = textwrap.dedent(go_src).strip()
+          with open('main.go', 'w', encoding='utf-8') as f:
+              f.write(go_src)
+
+          print("main.go written successfully")
+
+      - name: Build dashboard.exe
+        shell: pwsh
+        run: go build -ldflags="-H windowsgui" -o "app\dashboard.exe" main.go
+
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path "app\*" -DestinationPath "dashboard-windows.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-windows
+          path: dashboard-windows.zip
+          retention-days: 30
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Dashboard Revenus Podologue - Windows
+          body: |
+            Installation:
+            1. Telecharger dashboard-windows.zip
+            2. Clic droit -> Extraire tout -> Bureau
+            3. Double-cliquer dashboard.exe
+            Le navigateur s'ouvre automatiquement. Node.js inclus.
+            Si probleme: double-cliquer Demarrer.bat pour voir les erreurs.
+          files: dashboard-windows.zip
+          make_latest: true
