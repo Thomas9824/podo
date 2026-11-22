@@ -235,7 +235,7 @@ export async function GET(req: Request) {
   /* ── STATS ROW ── */
   .stats-row {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr 1fr;
+    grid-template-columns: 1fr 1fr;
     gap: 4mm;
     margin-bottom: 0;
   }
@@ -386,14 +386,7 @@ export async function GET(req: Request) {
       <div class="stat-label">Consultations</div>
       <div class="stat-value">${paidRows.length}${unpaidRows.length > 0 ? ` <span style="font-size:9pt;color:#999;">+${unpaidRows.length} impayé${unpaidRows.length > 1 ? 's' : ''}</span>` : ''}</div>
     </div>
-    <div class="stat">
-      <div class="stat-label">Panier moyen brut</div>
-      <div class="stat-value">${fmt2(paidRows.length ? totalMontant / paidRows.length : 0)}</div>
-    </div>
-    <div class="stat">
-      <div class="stat-label">Panier moyen net</div>
-      <div class="stat-value">${fmt2(paidRows.length ? totalNet / paidRows.length : 0)}</div>
-    </div>
+
   </div>
 
   <div class="doc-footer">
