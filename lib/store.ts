@@ -19,6 +19,8 @@ const HEADERS = [
   'commentaire',
   'duree',
   'session_id',
+  'impaye',
+  'maison_retraite',
 ] as const
 
 export type ConsultationInput = {
@@ -30,6 +32,8 @@ export type ConsultationInput = {
   commentaire: string
   duree: number
   session_id: string
+  impaye?: boolean
+  maison_retraite?: boolean
 }
 
 type RawRow = Record<string, unknown>
@@ -53,6 +57,20 @@ async function readRows(): Promise<Consultation[]> {
   return raw.map((r, i) => {
     const montant = Number(r.montant) || 0
     const { retrocession, net } = derive(montant)
+    const isImpaye =
+      r.impaye === true ||
+      String(r.impaye ?? '').toLowerCase() === 'true' ||
+      String(r.impaye ?? '').toLowerCase() === 'oui' ||
+      String(r.impaye ?? '').toLowerCase() === '1' ||
+      r.impaye === 1
+
+    const isMaisonRetraite =
+      r.maison_retraite === true ||
+      String(r.maison_retraite ?? '').toLowerCase() === 'true' ||
+      String(r.maison_retraite ?? '').toLowerCase() === 'oui' ||
+      String(r.maison_retraite ?? '').toLowerCase() === '1' ||
+      r.maison_retraite === 1
+
     return {
       id: i + 1,
       date: String(r.date ?? '').slice(0, 10),
@@ -65,6 +83,8 @@ async function readRows(): Promise<Consultation[]> {
       commentaire: String(r.commentaire ?? ''),
       duree: Number(r.duree) || 0,
       session_id: String(r.session_id ?? ''),
+      impaye: Boolean(isImpaye),
+      maison_retraite: Boolean(isMaisonRetraite),
     }
   })
 }
@@ -81,6 +101,8 @@ async function writeRows(rows: Consultation[]): Promise<void> {
     commentaire: r.commentaire,
     duree: r.duree,
     session_id: r.session_id,
+    impaye: r.impaye ? 'OUI' : 'NON',
+    maison_retraite: r.maison_retraite ? 'OUI' : 'NON',
   }))
   const ws = utils.json_to_sheet(data, { header: HEADERS as unknown as string[] })
   const wb = utils.book_new()
@@ -108,6 +130,8 @@ export async function addRow(input: ConsultationInput): Promise<Consultation[]> 
     commentaire: input.commentaire,
     duree: input.duree,
     session_id: input.session_id,
+    impaye: Boolean(input.impaye),
+    maison_retraite: Boolean(input.maison_retraite),
   })
   await writeRows(rows)
   return rows
@@ -121,8 +145,17 @@ export async function updateRow(
   const idx = rows.findIndex((r) => r.id === id)
   if (idx === -1) throw new Error('Consultation introuvable')
   const { retrocession, net } = derive(input.montant)
-  rows[idx] = {
-    ...rows[idx],
+  const targetSessionId = rows[idx].session_id
+
+  let nextRows = rows
+  if (targetSessionId) {
+    // Si la consultation faisait partie d'une session groupée, on remplace le lot par la ligne mise à jour
+    nextRows = rows.filter((r) => r.id === id || r.session_id !== targetSessionId)
+  }
+
+  const newIdx = nextRows.findIndex((r) => r.id === id)
+  nextRows[newIdx] = {
+    ...nextRows[newIdx],
     date: input.date,
     nom: input.nom,
     type: input.type,
@@ -133,14 +166,22 @@ export async function updateRow(
     commentaire: input.commentaire,
     duree: input.duree,
     session_id: input.session_id,
+    impaye: Boolean(input.impaye),
+    maison_retraite: Boolean(input.maison_retraite),
   }
-  await writeRows(rows)
-  return rows
+  await writeRows(nextRows)
+  return nextRows
 }
 
 export async function deleteRow(id: number): Promise<Consultation[]> {
   const rows = await readRows()
-  const next = rows.filter((r) => r.id !== id)
+  const target = rows.find((r) => r.id === id)
+  let next = rows
+  if (target?.session_id) {
+    next = rows.filter((r) => r.session_id !== target.session_id)
+  } else {
+    next = rows.filter((r) => r.id !== id)
+  }
   await writeRows(next)
   return next
 }

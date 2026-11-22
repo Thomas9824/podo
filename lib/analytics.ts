@@ -10,6 +10,8 @@ export type Consultation = {
   commentaire: string
   duree: number          // durée totale de la consultation en minutes
   session_id: string     // id partagé entre les soins d'une même visite (vide = soin unique)
+  impaye?: boolean       // true si la consultation est impayée (non encaissée)
+  maison_retraite?: boolean // true si patient en maison de retraite / EHPAD
 }
 
 export const RETROCESSION_RATE = 0.35
@@ -53,11 +55,15 @@ const MOIS_COURT = [
   'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.',
 ]
 
-function toDate(iso: string) {
-  return new Date(iso + 'T00:00:00')
+function toDate(isoStr: string) {
+  const [y, m, d] = isoStr.split('-').map(Number)
+  return new Date(y, (m || 1) - 1, d || 1, 12, 0, 0)
+}
+function pad2(n: number) {
+  return String(n).padStart(2, '0')
 }
 function iso(d: Date) {
-  return d.toISOString().slice(0, 10)
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
 }
 
 /**
@@ -111,7 +117,107 @@ export function periodLabel(
   if (period === 'month') return `${MOIS[ref.getMonth()]} ${ref.getFullYear()}`
   if (period === 'year') return `Année ${ref.getFullYear()}`
   const b = periodBounds('week', refDate)
-  return `Semaine du ${fmtDay(b.start!)} au ${fmtDay(b.end!)}`
+  if (!b.start || !b.end) return 'Semaine'
+  const d0 = toDate(b.start)
+  const d1 = toDate(b.end)
+  return `Semaine du ${d0.getDate()} ${MOIS_COURT[d0.getMonth()]} au ${d1.getDate()} ${MOIS_COURT[d1.getMonth()]} ${d1.getFullYear()}`
+}
+
+export function periodShortLabel(period: PeriodKey, refDate?: string): string {
+  const ref = toDate(refDate ?? iso(new Date()))
+  if (period === 'year') return `${ref.getFullYear()}`
+  if (period === 'month') return `${MOIS[ref.getMonth()]} ${ref.getFullYear()}`
+  if (period === 'week') {
+    const b = periodBounds('week', refDate)
+    if (!b.start || !b.end) return 'Semaine'
+    const d0 = toDate(b.start)
+    const d1 = toDate(b.end)
+    if (d0.getMonth() === d1.getMonth()) {
+      return `${d0.getDate()} – ${d1.getDate()} ${MOIS_COURT[d0.getMonth()]}`
+    }
+    return `${d0.getDate()} ${MOIS_COURT[d0.getMonth()]} – ${d1.getDate()} ${MOIS_COURT[d1.getMonth()]}`
+  }
+  return ''
+}
+
+export function isSamePeriodAsToday(period: PeriodKey, refDate: string): boolean {
+  const today = new Date()
+  const todayStr = `${today.getFullYear()}-${pad2(today.getMonth() + 1)}-${pad2(today.getDate())}`
+  const dRef = toDate(refDate)
+  if (period === 'year') {
+    return dRef.getFullYear() === today.getFullYear()
+  }
+  if (period === 'month') {
+    return dRef.getFullYear() === today.getFullYear() && dRef.getMonth() === today.getMonth()
+  }
+  if (period === 'week') {
+    const bRef = periodBounds('week', refDate)
+    const bToday = periodBounds('week', todayStr)
+    return bRef.start === bToday.start
+  }
+  return true
+}
+
+export function shiftPeriod(period: PeriodKey, refDate: string, direction: -1 | 1): string {
+  const d = toDate(refDate)
+  if (period === 'week') {
+    d.setDate(d.getDate() + direction * 7)
+  } else if (period === 'month') {
+    // Toujours se placer au milieu du mois pour éviter le débordement de fin de mois (31 -> 28/30)
+    d.setDate(15)
+    d.setMonth(d.getMonth() + direction)
+  } else if (period === 'year') {
+    d.setFullYear(d.getFullYear() + direction)
+  }
+  return iso(d)
+}
+
+export type SplitPayment = {
+  isSplit: boolean
+  mode1: string
+  montant1: number
+  mode2: string
+  montant2: number
+}
+
+export function parsePaymentMode(mode: string, total: number = 0): SplitPayment {
+  if (!mode) {
+    return { isSplit: false, mode1: 'CB', montant1: total, mode2: 'Espèces', montant2: 0 }
+  }
+  const match = mode.match(/^(.+?)\s*\(([\d.,]+)\s*€?\)\s*\+\s*(.+?)\s*\(([\d.,]+)\s*€?\)$/i)
+  if (match) {
+    const m1 = parseFloat(match[2].replace(',', '.')) || 0
+    const m2 = parseFloat(match[4].replace(',', '.')) || 0
+    return {
+      isSplit: true,
+      mode1: match[1].trim(),
+      montant1: m1,
+      mode2: match[3].trim(),
+      montant2: m2,
+    }
+  }
+  return {
+    isSplit: false,
+    mode1: mode,
+    montant1: total,
+    mode2: mode.toLowerCase().includes('espèce') ? 'CB' : 'Espèces',
+    montant2: 0,
+  }
+}
+
+export function formatPaymentMode(split: {
+  isSplit: boolean
+  mode1: string
+  montant1: number
+  mode2: string
+  montant2: number
+}): string {
+  if (!split.isSplit) {
+    return split.mode1
+  }
+  const f1 = split.montant1.toFixed(2).replace(/\.00$/, '')
+  const f2 = split.montant2.toFixed(2).replace(/\.00$/, '')
+  return `${split.mode1} (${f1} €) + ${split.mode2} (${f2} €)`
 }
 
 export function fmtDay(isoDate: string) {
@@ -172,11 +278,31 @@ export function computeStats(
     }
   }
 
-  const totalMontant = sum(rows, (r) => r.montant)
-  const totalRetro = sum(rows, (r) => r.retrocession)
-  const totalNet = sum(rows, (r) => r.net)
-  const panier = n ? totalNet / n : 0
-  const panierBrut = n ? totalMontant / n : 0
+  const paidRows = rows.filter((r) => !r.impaye)
+  const unpaidRows = rows.filter((r) => r.impaye)
+
+  const totalMontant = sum(paidRows, (r) => r.montant)
+  const totalRetro = sum(paidRows, (r) => r.retrocession)
+  const totalNet = sum(paidRows, (r) => r.net)
+  const totalImpaye = sum(unpaidRows, (r) => r.montant)
+  const countImpaye = unpaidRows.length
+
+  const maisonRetraiteRows = rows.filter((r) => r.maison_retraite)
+  const countMaisonRetraite = maisonRetraiteRows.length
+  const totalMaisonRetraite = round2(sum(maisonRetraiteRows.filter((r) => !r.impaye), (r) => r.montant))
+
+  const paidSessions = new Set<string>()
+  let nPaye = 0
+  for (const r of paidRows) {
+    if (r.session_id) {
+      if (!paidSessions.has(r.session_id)) { paidSessions.add(r.session_id); nPaye++ }
+    } else {
+      nPaye++
+    }
+  }
+
+  const panier = nPaye ? totalNet / nPaye : 0
+  const panierBrut = nPaye ? totalMontant / nPaye : 0
 
   // Utilise la durée stockée si > 0, sinon tombe sur la table de référence
   const totalMinutes = rows.reduce((acc, r) => acc + (r.duree > 0 ? r.duree : dureeFor(r.type)), 0)
@@ -184,7 +310,7 @@ export function computeStats(
   const netParHeure = totalHeures ? totalNet / totalHeures : 0
   const montantParHeure = totalHeures ? totalMontant / totalHeures : 0
 
-  // Évolution vs période précédente équivalente (sur CA brut)
+  // Évolution vs période précédente équivalente (sur CA brut encaissé)
   let evolution: number | null = null
   if (start && end) {
     const d0 = toDate(start)
@@ -195,19 +321,22 @@ export function computeStats(
     const prevStart = new Date(d0)
     prevStart.setDate(d0.getDate() - span)
     const prev = filterPeriod(all, iso(prevStart), iso(prevEnd))
-    const prevMontant = sum(prev, (r) => r.montant)
+    const prevPaid = prev.filter((r) => !r.impaye)
+    const prevMontant = sum(prevPaid, (r) => r.montant)
     if (prevMontant) evolution = ((totalMontant - prevMontant) / prevMontant) * 100
     else if (totalMontant) evolution = 100
   }
 
-  // Par type de soin — priorise le CA brut
+  // Par type de soin — priorise le CA brut encaissé
   const typeMap = new Map<string, { nb: number; montant: number; net: number; minutes: number }>()
   for (const r of rows) {
     const cur = typeMap.get(r.type) ?? { nb: 0, montant: 0, net: 0, minutes: 0 }
     cur.nb += 1
-    cur.montant += r.montant
-    cur.net += r.net
-    cur.minutes += dureeFor(r.type)
+    if (!r.impaye) {
+      cur.montant += r.montant
+      cur.net += r.net
+    }
+    cur.minutes += (r.duree > 0 ? r.duree : dureeFor(r.type))
     typeMap.set(r.type, cur)
   }
   const parType = [...typeMap.entries()]
@@ -223,14 +352,46 @@ export function computeStats(
     }))
     .sort((a, b) => b.montant - a.montant)
 
-  // Par mode de paiement (regroupe les libellés rares) — priorise le brut
+  // Par mode de paiement (regroupe les libellés rares) — priorise le brut encaissé
+  // Pour éviter de doubler les paiements d'une même session multi-soins, on fusionne d'abord par session_id
+  const sessionMergedPaid: Consultation[] = []
+  const seenSessions = new Map<string, Consultation>()
+  for (const r of paidRows) {
+    if (!r.session_id) {
+      sessionMergedPaid.push(r)
+    } else if (seenSessions.has(r.session_id)) {
+      const base = seenSessions.get(r.session_id)!
+      base.montant = round2(base.montant + r.montant)
+      base.net = round2(base.net + r.net)
+    } else {
+      const clone = { ...r }
+      seenSessions.set(r.session_id, clone)
+      sessionMergedPaid.push(clone)
+    }
+  }
+
   const modeMap = new Map<string, { montant: number; net: number }>()
-  for (const r of rows) {
-    const key = normaliseMode(r.mode)
-    const cur = modeMap.get(key) ?? { montant: 0, net: 0 }
-    cur.montant += r.montant
-    cur.net += r.net
-    modeMap.set(key, cur)
+  for (const r of sessionMergedPaid) {
+    const split = parsePaymentMode(r.mode, r.montant)
+    if (split.isSplit) {
+      const k1 = normaliseMode(split.mode1)
+      const cur1 = modeMap.get(k1) ?? { montant: 0, net: 0 }
+      cur1.montant += split.montant1
+      cur1.net += round2(split.montant1 * 0.65)
+      modeMap.set(k1, cur1)
+
+      const k2 = normaliseMode(split.mode2)
+      const cur2 = modeMap.get(k2) ?? { montant: 0, net: 0 }
+      cur2.montant += split.montant2
+      cur2.net += round2(split.montant2 * 0.65)
+      modeMap.set(k2, cur2)
+    } else {
+      const key = normaliseMode(r.mode)
+      const cur = modeMap.get(key) ?? { montant: 0, net: 0 }
+      cur.montant += r.montant
+      cur.net += r.net
+      modeMap.set(key, cur)
+    }
   }
   const parMode = [...modeMap.entries()]
     .map(([mode, v]) => ({
@@ -241,16 +402,16 @@ export function computeStats(
     }))
     .sort((a, b) => b.montant - a.montant)
 
-  // Évolution temporelle (contient brut et net)
+  // Évolution temporelle (contient brut et net encaissés)
   const spanDays =
-    n > 1
+    rows.length > 1
       ? Math.round(
-          (toDate(rows[n - 1].date).getTime() - toDate(rows[0].date).getTime()) / 86400000,
+          (toDate(rows[rows.length - 1].date).getTime() - toDate(rows[0].date).getTime()) / 86400000,
         )
       : 0
   const monthly = spanDays > 45
   const serieMap = new Map<string, { montant: number; net: number }>()
-  for (const r of rows) {
+  for (const r of paidRows) {
     const key = monthly ? r.date.slice(0, 7) + '-01' : r.date
     const cur = serieMap.get(key) ?? { montant: 0, net: 0 }
     cur.montant += r.montant
@@ -277,8 +438,10 @@ export function computeStats(
       if (sessionKey) patientSessions.add(sessionKey)
       cur.nb += 1
     }
-    cur.montant += r.montant
-    cur.net += r.net
+    if (!r.impaye) {
+      cur.montant += r.montant
+      cur.net += r.net
+    }
     patientMap.set(r.nom, cur)
   }
   const topPatients = [...patientMap.entries()]
@@ -286,14 +449,16 @@ export function computeStats(
     .sort((a, b) => b.montant - a.montant)
     .slice(0, 8)
 
-  // Par jour de semaine — brut et net
+  // Par jour de semaine — brut et net encaissés
   const jourMontant = new Array(7).fill(0)
   const jourNet = new Array(7).fill(0)
   const jourNb = new Array(7).fill(0)
   for (const r of rows) {
     const idx = (toDate(r.date).getDay() + 6) % 7
-    jourMontant[idx] += r.montant
-    jourNet[idx] += r.net
+    if (!r.impaye) {
+      jourMontant[idx] += r.montant
+      jourNet[idx] += r.net
+    }
     jourNb[idx] += 1
   }
   const parJour = JOURS.map((jour, i) => ({
@@ -309,6 +474,10 @@ export function computeStats(
     totalMontant: round2(totalMontant),
     totalRetro: round2(totalRetro),
     totalNet: round2(totalNet),
+    totalImpaye: round2(totalImpaye),
+    countImpaye,
+    countMaisonRetraite,
+    totalMaisonRetraite,
     panier: round2(panier),
     panierBrut: round2(panierBrut),
     totalHeures: round1(totalHeures),
@@ -355,9 +524,20 @@ export function searchConsultations(
   let rows = filterPeriod(all, start, end)
   const q = query.trim().toLowerCase()
   if (q) {
-    rows = rows.filter(
-      (r) => r.nom.toLowerCase().includes(q) || r.type.toLowerCase().includes(q),
-    )
+    if (q === 'impaye' || q === 'impayé' || q === 'impayes' || q === 'impayés') {
+      rows = rows.filter((r) => r.impaye)
+    } else if (q === 'maison' || q === 'retraite' || q === 'ehpad' || q === 'maison de retraite') {
+      rows = rows.filter((r) => r.maison_retraite)
+    } else {
+      rows = rows.filter(
+        (r) =>
+          r.nom.toLowerCase().includes(q) ||
+          r.type.toLowerCase().includes(q) ||
+          r.mode.toLowerCase().includes(q) ||
+          (Boolean(r.impaye) && 'impayé'.includes(q)) ||
+          (Boolean(r.maison_retraite) && 'maison de retraite ehpad'.includes(q)),
+      )
+    }
   }
 
   // Fusionner les lignes d'une même session en une seule ligne pour l'affichage
@@ -365,7 +545,7 @@ export function searchConsultations(
   const seen = new Map<string, Consultation>()
   for (const r of rows) {
     if (!r.session_id) {
-      merged.push(r)
+      merged.push({ ...r, impaye: Boolean(r.impaye), maison_retraite: Boolean(r.maison_retraite) })
     } else if (seen.has(r.session_id)) {
       const base = seen.get(r.session_id)!
       base.type = base.type + ' + ' + r.type
@@ -373,9 +553,11 @@ export function searchConsultations(
       base.retrocession = round2(base.retrocession + r.retrocession)
       base.net = round2(base.net + r.net)
       base.duree += r.duree
+      if (r.impaye) base.impaye = true
+      if (r.maison_retraite) base.maison_retraite = true
     } else {
       // Clone pour ne pas muter le tableau d'origine
-      const clone = { ...r }
+      const clone = { ...r, impaye: Boolean(r.impaye), maison_retraite: Boolean(r.maison_retraite) }
       seen.set(r.session_id, clone)
       merged.push(clone)
     }

@@ -37,14 +37,20 @@ export function KpiCards({ stats }: { stats: Stats }) {
           <span className="font-serif text-2xl font-semibold leading-none tracking-tight tabular-nums">
             {formatEUR(stats.totalMontant)}
           </span>
-          <div className="text-[11px] text-primary-foreground/75">
-            {stats.evolution !== null ? (
+          <div className="flex flex-col gap-1 text-[11px] text-primary-foreground/75">
+            {stats.evolution !== null && (
               <span className="inline-flex items-center gap-1 font-medium">
                 {stats.evolution >= 0 ? <TrendingUp className="size-3" /> : <TrendingDown className="size-3" />}
                 {stats.evolution >= 0 ? '+' : ''}
                 {stats.evolution}% vs N-1
               </span>
-            ) : (
+            )}
+            {stats.totalImpaye > 0 && (
+              <span className="inline-flex items-center gap-1 font-medium text-amber-200">
+                • {formatEUR(stats.totalImpaye)} impayé{stats.countImpaye > 1 ? 's' : ''} exclu{stats.countImpaye > 1 ? 's' : ''}
+              </span>
+            )}
+            {stats.evolution === null && stats.totalImpaye === 0 && (
               <span>Total brut encaissé</span>
             )}
           </div>
@@ -66,7 +72,11 @@ export function KpiCards({ stats }: { stats: Stats }) {
       />
       <Kpi
         label="Consultations"
-        sublabel={`${stats.totalHeures} h de soins`}
+        sublabel={
+          stats.countMaisonRetraite > 0
+            ? `${stats.totalHeures} h · dont ${stats.countMaisonRetraite} maison de retraite`
+            : `${stats.totalHeures} h de soins`
+        }
         icon={Users}
         value={String(stats.n)}
       />

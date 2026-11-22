@@ -39,25 +39,36 @@ export async function GET(req: Request) {
     .slice()
     .sort((a, b) => a.date.localeCompare(b.date))
 
-  const totalMontant = rows.reduce((s, r) => s + r.montant, 0)
-  const totalRetro = rows.reduce((s, r) => s + r.retrocession, 0)
-  const totalNet = rows.reduce((s, r) => s + r.net, 0)
+  const paidRows = rows.filter((r) => !r.impaye)
+  const unpaidRows = rows.filter((r) => r.impaye)
+  const totalMontant = paidRows.reduce((s, r) => s + r.montant, 0)
+  const totalRetro = paidRows.reduce((s, r) => s + r.retrocession, 0)
+  const totalNet = paidRows.reduce((s, r) => s + r.net, 0)
+  const totalImpaye = unpaidRows.reduce((s, r) => s + r.montant, 0)
   const retroParPersonne = totalRetro / 2
 
   const generatedAt = new Date().toLocaleDateString('fr-FR', {
     day: '2-digit', month: 'long', year: 'numeric',
   })
 
-  const rowsHtml = rows.map((r, i) => `
-    <tr class="${i % 2 === 0 ? 'even' : ''}">
+  const rowsHtml = rows.map((r, i) => {
+    const isImpaye = Boolean(r.impaye)
+    const rowClass = [
+      i % 2 === 0 ? 'even' : '',
+      isImpaye ? 'row-impaye' : '',
+    ].filter(Boolean).join(' ')
+
+    return `
+    <tr class="${rowClass}">
       <td class="center">${fmtDate(r.date)}</td>
-      <td>${r.nom || '—'}</td>
+      <td>${r.nom || '—'}${r.maison_retraite ? ' <span style="font-size:7pt;color:#b45309;background:#fef3c7;padding:1px 4px;border-radius:3px;font-weight:600;">EHPAD</span>' : ''}</td>
       <td>${r.type}</td>
-      <td class="center">${r.mode}</td>
-      <td class="right mono">${fmt2(r.montant)}</td>
-      <td class="right mono muted">${fmt2(r.retrocession)}</td>
-      <td class="right mono bold">${fmt2(r.net)}</td>
-    </tr>`).join('\n')
+      <td class="center">${isImpaye ? '<span class="badge-impaye">Impayé</span> ' : ''}${r.mode}</td>
+      <td class="right mono ${isImpaye ? 'impaye-montant' : ''}">${fmt2(r.montant)}</td>
+      <td class="right mono muted ${isImpaye ? 'impaye-montant' : ''}">${isImpaye ? '—' : fmt2(r.retrocession)}</td>
+      <td class="right mono bold ${isImpaye ? 'impaye-montant' : ''}">${isImpaye ? '—' : fmt2(r.net)}</td>
+    </tr>`
+  }).join('\n')
 
   const html = `<!DOCTYPE html>
 <html lang="fr">
@@ -217,6 +228,8 @@ export async function GET(req: Request) {
   }
   tbody tr { border-bottom: 1px solid #f0f0f0; }
   tbody tr.even { background: #fafafa; }
+  tbody tr.row-impaye { background: #fff1f2 !important; }
+  tbody tr.row-impaye td { color: #991b1b; }
   tbody tr:last-child { border-bottom: none; }
   td { padding: 2.5mm 4mm; }
   .center { text-align: center; }
@@ -224,6 +237,21 @@ export async function GET(req: Request) {
   .mono { font-variant-numeric: tabular-nums; }
   .bold { font-weight: 600; color: #1a1a2e; }
   .muted { color: #999; }
+  .badge-impaye {
+    display: inline-block;
+    background: #e11d48;
+    color: #fff;
+    font-size: 7pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding: 1px 4px;
+    border-radius: 3px;
+    margin-right: 4px;
+  }
+  .impaye-montant {
+    color: #e11d48 !important;
+    text-decoration: line-through;
+  }
 
   /* ── TABLE FOOTER ───────────────────────────── */
   tfoot tr {
@@ -377,7 +405,9 @@ export async function GET(req: Request) {
     </tbody>
     <tfoot>
       <tr>
-        <td colspan="4" style="font-size:9pt;color:#555;">Total — ${rows.length} consultation${rows.length > 1 ? 's' : ''}</td>
+        <td colspan="4" style="font-size:9pt;color:#555;">
+          Total encaissé — ${paidRows.length}/${rows.length} consultation${rows.length > 1 ? 's' : ''}${totalImpaye > 0 ? ` (${fmt2(totalImpaye)} impayé${unpaidRows.length > 1 ? 's' : ''} exclu${unpaidRows.length > 1 ? 's' : ''})` : ''}
+        </td>
         <td class="right mono">${fmt2(totalMontant)}</td>
         <td class="right mono muted">${fmt2(totalRetro)}</td>
         <td class="right mono bold" style="color:#d4607a;">${fmt2(totalNet)}</td>

@@ -1,11 +1,15 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Stethoscope, Plus } from 'lucide-react'
+import { Stethoscope, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
   computeStats,
   periodLabel,
+  periodShortLabel,
+  isSamePeriodAsToday,
+  shiftPeriod,
   searchConsultations,
   type Consultation,
   type PeriodKey,
@@ -29,27 +33,32 @@ const PERIODS: { key: PeriodKey; label: string }[] = [
 ]
 
 function todayISO() {
-  return new Date().toISOString().slice(0, 10)
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
 }
 
 function daysAgoISO(n: number) {
   const d = new Date()
   d.setDate(d.getDate() - n + 1)
-  return d.toISOString().slice(0, 10)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
 }
 
 export function Dashboard() {
   const [rows, setRows] = useState<Consultation[]>([])
   const [loading, setLoading] = useState(true)
   const [period, setPeriod] = useState<PeriodKey>('year')
+  const [currentRefDate, setCurrentRefDate] = useState(() => todayISO())
   const [customRange, setCustomRange] = useState<DateRange>({
     start: daysAgoISO(30),
     end: todayISO(),
   })
   const [query, setQuery] = useState('')
-
-  // La date de référence = aujourd'hui (toujours dynamique)
-  const refDate = todayISO()
 
   // Charger les consultations depuis l'API au montage
   useEffect(() => {
@@ -63,13 +72,16 @@ export function Dashboard() {
   }, [])
 
   const stats = useMemo(
-    () => computeStats(rows, period, refDate, customRange),
-    [rows, period, refDate, customRange],
+    () => computeStats(rows, period, currentRefDate, customRange),
+    [rows, period, currentRefDate, customRange],
   )
   const tableRows = useMemo(
-    () => searchConsultations(rows, period, query, refDate, customRange),
-    [rows, period, query, refDate, customRange],
+    () => searchConsultations(rows, period, query, currentRefDate, customRange),
+    [rows, period, query, currentRefDate, customRange],
   )
+
+  const canNavigate = period === 'week' || period === 'month' || period === 'year'
+  const isCurrentToday = isSamePeriodAsToday(period, currentRefDate)
 
   const types = useMemo(
     () => Array.from(new Set(rows.map((r) => r.type))).sort((a, b) => a.localeCompare(b)),
@@ -82,15 +94,17 @@ export function Dashboard() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-      date: c.date,
-      nom: c.nom,
-      type: c.type,
-      mode: c.mode,
-      montant: c.montant,
-      commentaire: c.commentaire,
-      duree: c.duree,
-      session_id: c.session_id,
-    }),
+        date: c.date,
+        nom: c.nom,
+        type: c.type,
+        mode: c.mode,
+        montant: c.montant,
+        commentaire: c.commentaire,
+        duree: c.duree,
+        session_id: c.session_id,
+        impaye: Boolean(c.impaye),
+        maison_retraite: Boolean(c.maison_retraite),
+      }),
     })
     if (res.ok) {
       const updated: Consultation[] = await res.json()
@@ -103,15 +117,17 @@ export function Dashboard() {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-      date: c.date,
-      nom: c.nom,
-      type: c.type,
-      mode: c.mode,
-      montant: c.montant,
-      commentaire: c.commentaire,
-      duree: c.duree,
-      session_id: c.session_id,
-    }),
+        date: c.date,
+        nom: c.nom,
+        type: c.type,
+        mode: c.mode,
+        montant: c.montant,
+        commentaire: c.commentaire,
+        duree: c.duree,
+        session_id: c.session_id,
+        impaye: Boolean(c.impaye),
+        maison_retraite: Boolean(c.maison_retraite),
+      }),
     })
     if (res.ok) {
       const updated: Consultation[] = await res.json()
@@ -142,7 +158,7 @@ export function Dashboard() {
                 Cabinet podologie
               </h1>
               <p className="text-xs capitalize text-muted-foreground">
-                {periodLabel(period, refDate, customRange)}
+                {periodLabel(period, currentRefDate, customRange)}
               </p>
             </div>
           </div>
@@ -161,6 +177,63 @@ export function Dashboard() {
                 </ToggleGroupItem>
               ))}
             </ToggleGroup>
+
+            {/* Navigation temporelle (flèches semaine / mois / année) */}
+            {canNavigate && (
+              <div className="flex items-center gap-1 rounded-lg border border-border/80 bg-card p-0.5 shadow-2xs">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 text-muted-foreground hover:text-foreground"
+                  onClick={() => setCurrentRefDate(shiftPeriod(period, currentRefDate, -1))}
+                  title={
+                    period === 'week'
+                      ? 'Semaine précédente'
+                      : period === 'month'
+                      ? 'Mois précédent'
+                      : 'Année précédente'
+                  }
+                >
+                  <ChevronLeft className="size-4" />
+                </Button>
+
+                <span className="min-w-28 text-center text-xs font-semibold capitalize text-foreground px-1 select-none">
+                  {periodShortLabel(period, currentRefDate)}
+                </span>
+
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 text-muted-foreground hover:text-foreground"
+                  onClick={() => setCurrentRefDate(shiftPeriod(period, currentRefDate, 1))}
+                  title={
+                    period === 'week'
+                      ? 'Semaine suivante'
+                      : period === 'month'
+                      ? 'Mois suivant'
+                      : 'Année suivante'
+                  }
+                >
+                  <ChevronRight className="size-4" />
+                </Button>
+
+                {!isCurrentToday && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-6 px-1.5 text-[10px] font-semibold text-primary border-primary/30 hover:bg-primary/10 ml-0.5 cursor-pointer"
+                    onClick={() => setCurrentRefDate(todayISO())}
+                    title="Revenir à aujourd'hui"
+                  >
+                    Aujourd'hui
+                  </Button>
+                )}
+              </div>
+            )}
+
             <ExportPdfButton />
             <AddConsultationDialog modes={modes} onAdd={addConsultation} />
           </div>

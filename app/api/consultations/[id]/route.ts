@@ -14,6 +14,8 @@ export async function PATCH(req: Request, { params }: Params) {
     const body = (await req.json()) as ConsultationInput
     body.duree = Number(body.duree) || 0
     body.session_id = String(body.session_id ?? '')
+    body.impaye = Boolean(body.impaye)
+    body.maison_retraite = Boolean(body.maison_retraite)
     const rows = await updateRow(id, body)
     return NextResponse.json(rows)
   } catch (err) {

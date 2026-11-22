@@ -20,6 +20,8 @@ export async function POST(req: Request) {
     }
     body.duree = Number(body.duree) || 0
     body.session_id = String(body.session_id ?? '')
+    body.impaye = Boolean(body.impaye)
+    body.maison_retraite = Boolean(body.maison_retraite)
     const rows = await addRow(body)
     return NextResponse.json(rows, { status: 201 })
   } catch (err) {
