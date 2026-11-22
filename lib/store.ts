@@ -4,6 +4,14 @@ import { readFile, writeFile } from 'fs/promises'
 import { read, utils, write } from 'xlsx'
 import type { Consultation } from '@/lib/analytics'
 
+// ── Mutex simple pour sérialiser les accès au fichier xlsx (évite EBUSY) ──
+let _queue: Promise<unknown> = Promise.resolve()
+function withFileLock<T>(fn: () => Promise<T>): Promise<T> {
+  const next = _queue.then(() => fn())
+  _queue = next.catch(() => {})
+  return next
+}
+
 const FILE = path.join(process.cwd(), 'data', 'consultations-c71b22.xlsx')
 const SHEET = 'Consultations'
 const RETRO_RATE = 0.35
@@ -112,76 +120,81 @@ async function writeRows(rows: Consultation[]): Promise<void> {
 }
 
 export async function getAll(): Promise<Consultation[]> {
-  return readRows()
+  return withFileLock(() => readRows())
 }
 
 export async function addRow(input: ConsultationInput): Promise<Consultation[]> {
-  const rows = await readRows()
-  const { retrocession, net } = derive(input.montant)
-  rows.push({
-    id: rows.length + 1,
-    date: input.date,
-    nom: input.nom,
-    type: input.type,
-    mode: input.mode,
-    montant: round2(input.montant),
-    retrocession,
-    net,
-    commentaire: input.commentaire,
-    duree: input.duree,
-    session_id: input.session_id,
-    impaye: Boolean(input.impaye),
-    maison_retraite: Boolean(input.maison_retraite),
+  return withFileLock(async () => {
+    const rows = await readRows()
+    const { retrocession, net } = derive(input.montant)
+    rows.push({
+      id: rows.length + 1,
+      date: input.date,
+      nom: input.nom,
+      type: input.type,
+      mode: input.mode,
+      montant: round2(input.montant),
+      retrocession,
+      net,
+      commentaire: input.commentaire,
+      duree: input.duree,
+      session_id: input.session_id,
+      impaye: Boolean(input.impaye),
+      maison_retraite: Boolean(input.maison_retraite),
+    })
+    await writeRows(rows)
+    return rows
   })
-  await writeRows(rows)
-  return rows
 }
 
 export async function updateRow(
   id: number,
   input: ConsultationInput,
 ): Promise<Consultation[]> {
-  const rows = await readRows()
-  const idx = rows.findIndex((r) => r.id === id)
-  if (idx === -1) throw new Error('Consultation introuvable')
-  const { retrocession, net } = derive(input.montant)
-  const targetSessionId = rows[idx].session_id
+  return withFileLock(async () => {
+    const rows = await readRows()
+    const idx = rows.findIndex((r) => r.id === id)
+    if (idx === -1) throw new Error('Consultation introuvable')
+    const { retrocession, net } = derive(input.montant)
+    const targetSessionId = rows[idx].session_id
 
-  let nextRows = rows
-  if (targetSessionId) {
-    // Si la consultation faisait partie d'une session groupée, on remplace le lot par la ligne mise à jour
-    nextRows = rows.filter((r) => r.id === id || r.session_id !== targetSessionId)
-  }
+    let nextRows = rows
+    if (targetSessionId) {
+      nextRows = rows.filter((r) => r.id === id || r.session_id !== targetSessionId)
+    }
 
-  const newIdx = nextRows.findIndex((r) => r.id === id)
-  nextRows[newIdx] = {
-    ...nextRows[newIdx],
-    date: input.date,
-    nom: input.nom,
-    type: input.type,
-    mode: input.mode,
-    montant: round2(input.montant),
-    retrocession,
-    net,
-    commentaire: input.commentaire,
-    duree: input.duree,
-    session_id: input.session_id,
-    impaye: Boolean(input.impaye),
-    maison_retraite: Boolean(input.maison_retraite),
-  }
-  await writeRows(nextRows)
-  return nextRows
+    const newIdx = nextRows.findIndex((r) => r.id === id)
+    nextRows[newIdx] = {
+      ...nextRows[newIdx],
+      date: input.date,
+      nom: input.nom,
+      type: input.type,
+      mode: input.mode,
+      montant: round2(input.montant),
+      retrocession,
+      net,
+      commentaire: input.commentaire,
+      duree: input.duree,
+      session_id: input.session_id,
+      impaye: Boolean(input.impaye),
+      maison_retraite: Boolean(input.maison_retraite),
+    }
+    await writeRows(nextRows)
+    return nextRows
+  })
 }
 
 export async function deleteRow(id: number): Promise<Consultation[]> {
-  const rows = await readRows()
-  const target = rows.find((r) => r.id === id)
-  let next = rows
-  if (target?.session_id) {
-    next = rows.filter((r) => r.session_id !== target.session_id)
-  } else {
-    next = rows.filter((r) => r.id !== id)
-  }
-  await writeRows(next)
-  return next
+  return withFileLock(async () => {
+    const rows = await readRows()
+    const target = rows.find((r) => r.id === id)
+    let next = rows
+    if (target?.session_id) {
+      next = rows.filter((r) => r.session_id !== target.session_id)
+    } else {
+      next = rows.filter((r) => r.id !== id)
+    }
+    await writeRows(next)
+    return next
+  })
 }

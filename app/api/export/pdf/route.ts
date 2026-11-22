@@ -1,5 +1,7 @@
 import { getAll } from '@/lib/store'
-import { filterPeriod, formatEUR2 } from '@/lib/analytics'
+import { filterPeriod } from '@/lib/analytics'
+
+export const dynamic = 'force-dynamic'
 
 const MOIS_FR = [
   'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
@@ -27,7 +29,7 @@ export async function GET(req: Request) {
 
   const [yearStr, monthStr] = month.split('-')
   const year = parseInt(yearStr)
-  const monthIdx = parseInt(monthStr) - 1 // 0-based
+  const monthIdx = parseInt(monthStr) - 1
   const monthLabel = `${MOIS_FR[monthIdx]} ${year}`
 
   const startDate = `${year}-${monthStr.padStart(2, '0')}-01`
@@ -46,347 +48,41 @@ export async function GET(req: Request) {
   const totalNet = paidRows.reduce((s, r) => s + r.net, 0)
   const totalImpaye = unpaidRows.reduce((s, r) => s + r.montant, 0)
   const retroParPersonne = totalRetro / 2
+  const joursTravailes = new Set(paidRows.map((r) => r.date)).size
 
-  const generatedAt = new Date().toLocaleDateString('fr-FR', {
-    day: '2-digit', month: 'long', year: 'numeric',
-  })
+  // Split consultations into pages of ~25 rows
+  const PAGE_SIZE = 25
+  const pages: typeof rows[] = []
+  for (let i = 0; i < rows.length; i += PAGE_SIZE) {
+    pages.push(rows.slice(i, i + PAGE_SIZE))
+  }
 
-  const rowsHtml = rows.map((r, i) => {
-    const isImpaye = Boolean(r.impaye)
-    const rowClass = [
-      i % 2 === 0 ? 'even' : '',
-      isImpaye ? 'row-impaye' : '',
-    ].filter(Boolean).join(' ')
+  const totalPages = 1 + pages.length
 
-    return `
+  const consultationPages = pages.map((pageRows, pi) => {
+    const rowsHtml = pageRows.map((r, i) => {
+      const isImpaye = Boolean(r.impaye)
+      const rowClass = [i % 2 === 0 ? 'even' : '', isImpaye ? 'row-impaye' : ''].filter(Boolean).join(' ')
+      return `
     <tr class="${rowClass}">
       <td class="center">${fmtDate(r.date)}</td>
-      <td>${r.nom || '—'}${r.maison_retraite ? ' <span style="font-size:7pt;color:#b45309;background:#fef3c7;padding:1px 4px;border-radius:3px;font-weight:600;">EHPAD</span>' : ''}</td>
+      <td>${r.nom || '—'}${r.maison_retraite ? ' <span class="badge-ehpad">EHPAD</span>' : ''}</td>
       <td>${r.type}</td>
-      <td class="center">${isImpaye ? '<span class="badge-impaye">Impayé</span> ' : ''}${r.mode}</td>
-      <td class="right mono ${isImpaye ? 'impaye-montant' : ''}">${fmt2(r.montant)}</td>
+      <td class="center">${isImpaye ? '<span class="badge-impaye">Impayé</span>' : r.mode}</td>
+      <td class="right mono ${isImpaye ? 'impaye-montant' : ''}">${isImpaye ? fmt2(r.montant) : fmt2(r.montant)}</td>
       <td class="right mono muted ${isImpaye ? 'impaye-montant' : ''}">${isImpaye ? '—' : fmt2(r.retrocession)}</td>
       <td class="right mono bold ${isImpaye ? 'impaye-montant' : ''}">${isImpaye ? '—' : fmt2(r.net)}</td>
     </tr>`
-  }).join('\n')
+    }).join('\n')
 
-  const html = `<!DOCTYPE html>
-<html lang="fr">
-<head>
-<meta charset="UTF-8">
-<title>Relevé ${monthLabel}</title>
-<style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    const isLastPage = pi === pages.length - 1
 
-  body {
-    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
-    font-size: 11pt;
-    color: #1a1a2e;
-    background: #fff;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
-
-  /* ── PAGE LAYOUT ────────────────────────────── */
-  .page {
-    width: 210mm;
-    min-height: 297mm;
-    margin: 0 auto;
-    padding: 18mm 16mm 14mm;
-    position: relative;
-  }
-  .page-break { page-break-after: always; break-after: page; }
-
-  /* ── HEADER ─────────────────────────────────── */
-  .doc-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 10mm;
-    padding-bottom: 6mm;
-    border-bottom: 2px solid #d4607a;
-  }
-  .brand { display: flex; flex-direction: column; gap: 3px; }
-  .brand-name {
-    font-size: 18pt;
-    font-weight: 700;
-    letter-spacing: -0.3px;
-    color: #1a1a2e;
-  }
-  .brand-sub { font-size: 9pt; color: #888; }
-  .doc-meta { text-align: right; }
-  .doc-title {
-    font-size: 14pt;
-    font-weight: 600;
-    color: #d4607a;
-    margin-bottom: 4px;
-  }
-  .doc-period { font-size: 10pt; color: #555; }
-  .doc-generated { font-size: 8pt; color: #aaa; margin-top: 3px; }
-
-  /* ── SUMMARY CARDS ──────────────────────────── */
-  .summary {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 5mm;
-    margin-bottom: 8mm;
-  }
-  .card {
-    border: 1px solid #eee;
-    border-radius: 8px;
-    padding: 5mm 6mm;
-  }
-  .card-label { font-size: 8pt; color: #888; margin-bottom: 3px; text-transform: uppercase; letter-spacing: 0.5px; }
-  .card-value { font-size: 16pt; font-weight: 700; color: #1a1a2e; line-height: 1.1; }
-  .card-sub { font-size: 8pt; color: #aaa; margin-top: 3px; }
-  .card.primary { background: #d4607a; border-color: #d4607a; }
-  .card.primary .card-label { color: rgba(255,255,255,0.75); }
-  .card.primary .card-value { color: #fff; }
-  .card.primary .card-sub { color: rgba(255,255,255,0.6); }
-  .card.accent { background: #fff5f7; border-color: #f5c6d0; }
-
-  /* ── RETRO SPLIT ────────────────────────────── */
-  .retro-split {
-    background: #fff5f7;
-    border: 1px solid #f5c6d0;
-    border-radius: 8px;
-    padding: 5mm 6mm;
-    margin-bottom: 8mm;
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    align-items: center;
-    gap: 4mm;
-  }
-  .retro-split-title {
-    font-size: 8pt;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: #888;
-    margin-bottom: 2mm;
-    grid-column: 1 / -1;
-  }
-  .retro-person {
-    background: #fff;
-    border: 1px solid #f5c6d0;
-    border-radius: 6px;
-    padding: 4mm 5mm;
-    text-align: center;
-  }
-  .retro-person-name { font-size: 9pt; font-weight: 600; color: #555; margin-bottom: 3px; }
-  .retro-person-amount { font-size: 14pt; font-weight: 700; color: #d4607a; }
-  .retro-person-pct { font-size: 8pt; color: #aaa; }
-  .retro-total {
-    text-align: center;
-  }
-  .retro-total-label { font-size: 8pt; color: #888; margin-bottom: 3px; }
-  .retro-total-value { font-size: 14pt; font-weight: 700; color: #1a1a2e; }
-
-  /* ── STATS ROW ──────────────────────────────── */
-  .stats-row {
-    display: flex;
-    gap: 4mm;
-    margin-bottom: 10mm;
-  }
-  .stat-item {
-    flex: 1;
-    border: 1px solid #eee;
-    border-radius: 6px;
-    padding: 3mm 4mm;
-    text-align: center;
-  }
-  .stat-item .label { font-size: 8pt; color: #888; }
-  .stat-item .value { font-size: 11pt; font-weight: 600; color: #1a1a2e; margin-top: 2px; }
-
-  /* ── SECTION TITLE ──────────────────────────── */
-  .section-title {
-    font-size: 10pt;
-    font-weight: 600;
-    color: #1a1a2e;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 4mm;
-    padding-bottom: 2mm;
-    border-bottom: 1px solid #eee;
-  }
-
-  /* ── TABLE ──────────────────────────────────── */
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 9.5pt;
-  }
-  thead tr {
-    background: #1a1a2e;
-    color: #fff;
-  }
-  thead th {
-    padding: 3mm 4mm;
-    font-size: 8pt;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.4px;
-  }
-  tbody tr { border-bottom: 1px solid #f0f0f0; }
-  tbody tr.even { background: #fafafa; }
-  tbody tr.row-impaye { background: #fff1f2 !important; }
-  tbody tr.row-impaye td { color: #991b1b; }
-  tbody tr:last-child { border-bottom: none; }
-  td { padding: 2.5mm 4mm; }
-  .center { text-align: center; }
-  .right { text-align: right; }
-  .mono { font-variant-numeric: tabular-nums; }
-  .bold { font-weight: 600; color: #1a1a2e; }
-  .muted { color: #999; }
-  .badge-impaye {
-    display: inline-block;
-    background: #e11d48;
-    color: #fff;
-    font-size: 7pt;
-    font-weight: 700;
-    text-transform: uppercase;
-    padding: 1px 4px;
-    border-radius: 3px;
-    margin-right: 4px;
-  }
-  .impaye-montant {
-    color: #e11d48 !important;
-    text-decoration: line-through;
-  }
-
-  /* ── TABLE FOOTER ───────────────────────────── */
-  tfoot tr {
-    background: #f7f7f7;
-    border-top: 2px solid #eee;
-  }
-  tfoot td { padding: 3mm 4mm; font-weight: 600; }
-
-  /* ── FOOTER ─────────────────────────────────── */
-  .doc-footer {
-    position: absolute;
-    bottom: 8mm;
-    left: 16mm;
-    right: 16mm;
-    display: flex;
-    justify-content: space-between;
-    font-size: 7.5pt;
-    color: #bbb;
-    border-top: 1px solid #eee;
-    padding-top: 3mm;
-  }
-
-  /* ── PRINT ──────────────────────────────────── */
-  @media print {
-    html, body { margin: 0; background: #fff; }
-    .page { padding: 15mm 14mm 12mm; }
-    @page { size: A4; margin: 0; }
-  }
-</style>
-</head>
-<body>
-
-<!-- ══════════════════════════════════════════
-     PAGE 1 — RÉSUMÉ FINANCIER
-══════════════════════════════════════════ -->
-<div class="page page-break">
-
-  <div class="doc-header">
-    <div class="brand">
-      <div class="brand-name">Cabinet de podologie</div>
-      <div class="brand-sub">Relevé mensuel des revenus</div>
-    </div>
-    <div class="doc-meta">
-      <div class="doc-title">${monthLabel}</div>
-      <div class="doc-period">${fmtDate(startDate)} → ${fmtDate(endDate)}</div>
-      <div class="doc-generated">Généré le ${generatedAt}</div>
-    </div>
+    return `
+<div class="page${pi < pages.length - 1 ? ' page-break' : ''}">
+  <div class="page-header">
+    <div class="page-header-title">Comptabilité Mensuel Clara Mionnet — ${monthLabel}</div>
+    <div class="page-header-right">Consultations · p. ${pi + 2}/${totalPages}</div>
   </div>
-
-  <!-- KPIs principaux -->
-  <div class="summary">
-    <div class="card primary">
-      <div class="card-label">Revenu net</div>
-      <div class="card-value">${fmt0(totalNet)}</div>
-      <div class="card-sub">Après rétrocession (65 %)</div>
-    </div>
-    <div class="card">
-      <div class="card-label">Chiffre d'affaires</div>
-      <div class="card-value">${fmt0(totalMontant)}</div>
-      <div class="card-sub">Montant brut encaissé</div>
-    </div>
-    <div class="card accent">
-      <div class="card-label">Rétrocession totale</div>
-      <div class="card-value">${fmt0(totalRetro)}</div>
-      <div class="card-sub">35 % reversés au cabinet</div>
-    </div>
-  </div>
-
-  <!-- Répartition rétrocession -->
-  <div class="retro-split">
-    <div class="retro-split-title">Répartition de la rétrocession (35 % = 17,5 % + 17,5 %)</div>
-    <div class="retro-person">
-      <div class="retro-person-name">Yann</div>
-      <div class="retro-person-amount">${fmt2(retroParPersonne)}</div>
-      <div class="retro-person-pct">17,5 % du CA</div>
-    </div>
-    <div class="retro-total">
-      <div class="retro-total-label">Total rétrocession</div>
-      <div class="retro-total-value">${fmt2(totalRetro)}</div>
-    </div>
-    <div class="retro-person">
-      <div class="retro-person-name">Gautier</div>
-      <div class="retro-person-amount">${fmt2(retroParPersonne)}</div>
-      <div class="retro-person-pct">17,5 % du CA</div>
-    </div>
-  </div>
-
-  <!-- Stats secondaires -->
-  <div class="stats-row">
-    <div class="stat-item">
-      <div class="label">Consultations</div>
-      <div class="value">${rows.length}</div>
-    </div>
-    <div class="stat-item">
-      <div class="label">Panier moyen net</div>
-      <div class="value">${fmt2(rows.length ? totalNet / rows.length : 0)}</div>
-    </div>
-    <div class="stat-item">
-      <div class="label">Panier moyen brut</div>
-      <div class="value">${fmt2(rows.length ? totalMontant / rows.length : 0)}</div>
-    </div>
-    <div class="stat-item">
-      <div class="label">Jours travaillés</div>
-      <div class="value">${new Set(rows.map(r => r.date)).size}</div>
-    </div>
-  </div>
-
-  <!-- Aperçu tableau page 2 -->
-  <p style="font-size:9pt;color:#aaa;text-align:center;margin-top:auto;padding-top:8mm;">
-    → Détail de toutes les consultations en page 2
-  </p>
-
-  <div class="doc-footer">
-    <span>Cabinet de podologie — Relevé confidentiel</span>
-    <span>${monthLabel} · Page 1/2</span>
-  </div>
-</div>
-
-<!-- ══════════════════════════════════════════
-     PAGE 2 — LISTE DES CONSULTATIONS
-══════════════════════════════════════════ -->
-<div class="page">
-
-  <div class="doc-header">
-    <div class="brand">
-      <div class="brand-name">Cabinet de podologie</div>
-      <div class="brand-sub">Détail des consultations</div>
-    </div>
-    <div class="doc-meta">
-      <div class="doc-title">${monthLabel}</div>
-      <div class="doc-period">${rows.length} consultation${rows.length > 1 ? 's' : ''}</div>
-    </div>
-  </div>
-
-  <div class="section-title">Consultations du mois</div>
 
   <table>
     <thead>
@@ -403,23 +99,310 @@ export async function GET(req: Request) {
     <tbody>
       ${rowsHtml}
     </tbody>
+    ${isLastPage ? `
     <tfoot>
       <tr>
-        <td colspan="4" style="font-size:9pt;color:#555;">
-          Total encaissé — ${paidRows.length}/${rows.length} consultation${rows.length > 1 ? 's' : ''}${totalImpaye > 0 ? ` (${fmt2(totalImpaye)} impayé${unpaidRows.length > 1 ? 's' : ''} exclu${unpaidRows.length > 1 ? 's' : ''})` : ''}
+        <td colspan="4" class="foot-label">
+          Total — ${paidRows.length} consultation${paidRows.length > 1 ? 's' : ''} encaissées${totalImpaye > 0 ? ` · ${unpaidRows.length} impayé${unpaidRows.length > 1 ? 's' : ''} (${fmt2(totalImpaye)} exclu${unpaidRows.length > 1 ? 's' : ''})` : ''}
         </td>
         <td class="right mono">${fmt2(totalMontant)}</td>
         <td class="right mono muted">${fmt2(totalRetro)}</td>
-        <td class="right mono bold" style="color:#d4607a;">${fmt2(totalNet)}</td>
+        <td class="right mono bold accent-text">${fmt2(totalNet)}</td>
       </tr>
-    </tfoot>
+    </tfoot>` : ''}
   </table>
 
   <div class="doc-footer">
-    <span>Cabinet de podologie — Relevé confidentiel</span>
-    <span>${monthLabel} · Page 2/2</span>
+    <span>Clara Mionnet — Comptabilité ${monthLabel}</span>
+    <span>p. ${pi + 2}/${totalPages}</span>
+  </div>
+</div>`
+  }).join('\n')
+
+  const html = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Comptabilité ${monthLabel} — Clara Mionnet</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    font-size: 10.5pt;
+    color: #111;
+    background: #fff;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* ── PAGE ── */
+  .page {
+    width: 210mm;
+    min-height: 297mm;
+    margin: 0 auto;
+    padding: 16mm 16mm 14mm;
+    position: relative;
+  }
+  .page-break { page-break-after: always; break-after: page; }
+
+  /* ── COVER HEADER ── */
+  .cover-header {
+    border-bottom: 2.5px solid #111;
+    padding-bottom: 7mm;
+    margin-bottom: 10mm;
+  }
+  .cover-title {
+    font-size: 20pt;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    color: #111;
+    line-height: 1.1;
+  }
+  .cover-sub {
+    font-size: 11pt;
+    color: #666;
+    margin-top: 3px;
+  }
+  .cover-meta {
+    font-size: 8.5pt;
+    color: #aaa;
+    margin-top: 6px;
+  }
+
+  /* ── KPI GRID ── */
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 5mm;
+    margin-bottom: 7mm;
+  }
+  .kpi {
+    border: 1.5px solid #e5e5e5;
+    border-radius: 10px;
+    padding: 6mm 7mm;
+  }
+  .kpi.primary {
+    background: #111;
+    border-color: #111;
+    color: #fff;
+  }
+  .kpi-label {
+    font-size: 7.5pt;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: #888;
+    margin-bottom: 4px;
+  }
+  .kpi.primary .kpi-label { color: rgba(255,255,255,0.6); }
+  .kpi-value {
+    font-size: 22pt;
+    font-weight: 700;
+    color: #111;
+    line-height: 1;
+    letter-spacing: -0.5px;
+  }
+  .kpi.primary .kpi-value { color: #fff; }
+
+  /* ── RETRO BLOCK ── */
+  .retro-block {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 5mm;
+    align-items: stretch;
+    margin-bottom: 7mm;
+    border: 1.5px solid #e5e5e5;
+    border-radius: 10px;
+    padding: 5mm 7mm;
+  }
+  .retro-person {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .retro-person-name { font-size: 8pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #555; }
+  .retro-person-amount { font-size: 18pt; font-weight: 700; color: #111; letter-spacing: -0.3px; line-height: 1.1; }
+  .retro-person-pct { font-size: 7.5pt; color: #aaa; }
+  .retro-divider {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #ccc;
+    font-size: 14pt;
+    padding: 0 4mm;
+  }
+
+  /* ── STATS ROW ── */
+  .stats-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 4mm;
+    margin-bottom: 0;
+  }
+  .stat {
+    border: 1px solid #e5e5e5;
+    border-radius: 8px;
+    padding: 4mm 5mm;
+    text-align: center;
+  }
+  .stat-label { font-size: 7.5pt; color: #999; text-transform: uppercase; letter-spacing: 0.4px; }
+  .stat-value { font-size: 13pt; font-weight: 700; color: #111; margin-top: 3px; }
+
+  /* ── PAGE HEADER (pages 2+) ── */
+  .page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1.5px solid #111;
+    padding-bottom: 4mm;
+    margin-bottom: 7mm;
+  }
+  .page-header-title { font-size: 10pt; font-weight: 700; color: #111; }
+  .page-header-right { font-size: 8.5pt; color: #999; }
+
+  /* ── TABLE ── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 9pt;
+  }
+  thead tr { background: #111; color: #fff; }
+  thead th {
+    padding: 3mm 3.5mm;
+    font-size: 7.5pt;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  tbody tr { border-bottom: 1px solid #f0f0f0; }
+  tbody tr.even { background: #fafafa; }
+  tbody tr.row-impaye { background: #fff1f2 !important; }
+  tbody tr.row-impaye td { color: #991b1b; }
+  tbody tr:last-child { border-bottom: none; }
+  td { padding: 2.5mm 3.5mm; }
+  .center { text-align: center; }
+  .right { text-align: right; }
+  .mono { font-variant-numeric: tabular-nums; }
+  .bold { font-weight: 600; }
+  .muted { color: #999; }
+  .accent-text { color: #111; }
+
+  .badge-impaye {
+    display: inline-block;
+    background: #e11d48;
+    color: #fff;
+    font-size: 6.5pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
+  .badge-ehpad {
+    display: inline-block;
+    background: #fef3c7;
+    color: #b45309;
+    font-size: 6.5pt;
+    font-weight: 700;
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
+  .impaye-montant { color: #e11d48 !important; }
+
+  /* ── TFOOT ── */
+  tfoot tr { background: #f5f5f5; border-top: 2px solid #ddd; }
+  tfoot td { padding: 3mm 3.5mm; font-weight: 600; font-size: 9pt; }
+  .foot-label { font-size: 8pt; color: #666; font-weight: 400; }
+
+  /* ── FOOTER ── */
+  .doc-footer {
+    position: absolute;
+    bottom: 7mm;
+    left: 16mm;
+    right: 16mm;
+    display: flex;
+    justify-content: space-between;
+    font-size: 7pt;
+    color: #bbb;
+    border-top: 1px solid #eee;
+    padding-top: 2.5mm;
+  }
+
+  @media print {
+    html, body { margin: 0; background: #fff; }
+    .page { padding: 14mm 14mm 12mm; }
+    @page { size: A4; margin: 0; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ══ PAGE 1 — RÉSUMÉ ══ -->
+<div class="page page-break">
+
+  <div class="cover-header">
+    <div class="cover-title">Comptabilité Mensuel<br>Clara Mionnet</div>
+    <div class="cover-sub">${monthLabel}</div>
+    <div class="cover-meta">Généré le ${new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })}</div>
+  </div>
+
+  <!-- KPIs principaux -->
+  <div class="kpi-grid">
+    <div class="kpi primary">
+      <div class="kpi-label">CA brut</div>
+      <div class="kpi-value">${fmt0(totalMontant)}</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Après rétrocession</div>
+      <div class="kpi-value">${fmt0(totalNet)}</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Rétrocession totale</div>
+      <div class="kpi-value">${fmt0(totalRetro)}</div>
+    </div>
+  </div>
+
+  <!-- Répartition rétrocession -->
+  <div class="retro-block">
+    <div class="retro-person">
+      <div class="retro-person-name">Yann</div>
+      <div class="retro-person-amount">${fmt2(retroParPersonne)}</div>
+      <div class="retro-person-pct">17,5 % du CA</div>
+    </div>
+    <div class="retro-divider">÷ 2</div>
+    <div class="retro-person" style="text-align:right;">
+      <div class="retro-person-name">Gauthier</div>
+      <div class="retro-person-amount">${fmt2(retroParPersonne)}</div>
+      <div class="retro-person-pct">17,5 % du CA</div>
+    </div>
+  </div>
+
+  <!-- Stats secondaires -->
+  <div class="stats-row">
+    <div class="stat">
+      <div class="stat-label">Jours travaillés</div>
+      <div class="stat-value">${joursTravailes}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Consultations</div>
+      <div class="stat-value">${paidRows.length}${unpaidRows.length > 0 ? ` <span style="font-size:9pt;color:#999;">+${unpaidRows.length} impayé${unpaidRows.length > 1 ? 's' : ''}</span>` : ''}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Panier moyen brut</div>
+      <div class="stat-value">${fmt2(paidRows.length ? totalMontant / paidRows.length : 0)}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Panier moyen net</div>
+      <div class="stat-value">${fmt2(paidRows.length ? totalNet / paidRows.length : 0)}</div>
+    </div>
+  </div>
+
+  <div class="doc-footer">
+    <span>Clara Mionnet — Comptabilité ${monthLabel}</span>
+    <span>p. 1/${totalPages}</span>
   </div>
 </div>
+
+${consultationPages}
 
 </body>
 </html>`
