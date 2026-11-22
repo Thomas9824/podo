@@ -18,7 +18,7 @@ export function CareTypeTable({ stats }: { stats: Stats }) {
     <Card className="flex flex-col">
       <CardHeader className="pb-2">
         <CardTitle className="font-serif text-lg font-semibold">Performance par type de soin</CardTitle>
-        <CardDescription>CA brut et rentabilité horaire estimée</CardDescription>
+
       </CardHeader>
       <CardContent className="flex-1 pt-0">
         <ScrollArea className="h-[250px] pr-2">

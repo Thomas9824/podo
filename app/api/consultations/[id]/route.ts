@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { updateRow, deleteRow } from '@/lib/store'
 import type { ConsultationInput } from '@/lib/store'
 
+export const dynamic = 'force-dynamic'
+
 type Params = { params: Promise<{ id: string }> }
 
 export async function PATCH(req: Request, { params }: Params) {

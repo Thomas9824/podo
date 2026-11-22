@@ -44,9 +44,6 @@ export function RevenueChart({ stats }: { stats: Stats }) {
     <Card className="flex flex-col">
       <CardHeader className="pb-1">
         <CardTitle className="font-serif text-lg font-semibold">Chiffre d'affaires</CardTitle>
-        <CardDescription>
-          {stats.monthly ? 'Agrégation mensuelle' : 'Jour par jour'} · {formatEUR(stats.totalMontant)} brut encaissé
-        </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-1 flex-col justify-end pt-0 pb-2">
         <ChartContainer config={config} className="h-[250px] w-full">

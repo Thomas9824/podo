@@ -42,7 +42,7 @@ export function PaymentModeChart({ stats }: { stats: Stats }) {
     <Card className="flex flex-col">
       <CardHeader className="pb-1">
         <CardTitle className="font-serif text-lg font-semibold">Modes de paiement</CardTitle>
-        <CardDescription>Répartition du chiffre d'affaires brut</CardDescription>
+
       </CardHeader>
       <CardContent className="flex flex-1 flex-col justify-between gap-2.5 pt-0 pb-2">
         <ChartContainer config={config} className="mx-auto aspect-square h-[150px]">

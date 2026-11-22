@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { getAll, addRow } from '@/lib/store'
 import type { ConsultationInput } from '@/lib/store'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET() {
   try {
     const rows = await getAll()

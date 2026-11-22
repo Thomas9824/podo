@@ -55,7 +55,7 @@ export function WeekdayChart({ stats }: { stats: Stats }) {
             </span>
           )}
         </div>
-        <CardDescription>CA brut encaissé par jour de la semaine</CardDescription>
+
       </CardHeader>
       <CardContent className="flex-1 pt-0">
         <ChartContainer config={config} className="h-[250px] w-full">

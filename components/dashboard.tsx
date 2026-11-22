@@ -62,7 +62,7 @@ export function Dashboard() {
 
   // Charger les consultations depuis l'API au montage
   useEffect(() => {
-    fetch('/api/consultations')
+    fetch('/api/consultations', { cache: 'no-store' })
       .then((r) => r.json())
       .then((data: Consultation[]) => {
         setRows(data)

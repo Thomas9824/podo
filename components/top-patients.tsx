@@ -18,7 +18,7 @@ export function TopPatients({ stats }: { stats: Stats }) {
           <CardTitle className="font-serif text-lg font-semibold">Top patients</CardTitle>
           <span className="text-xs text-muted-foreground">Top {stats.topPatients.length}</span>
         </div>
-        <CardDescription>Classés par revenu net généré</CardDescription>
+
       </CardHeader>
       <CardContent className="flex-1 pt-0">
         {stats.topPatients.length === 0 ? (

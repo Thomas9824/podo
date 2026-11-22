@@ -175,9 +175,6 @@ export function EditConsultationDialog({
                 Modifier la consultation
               </DialogTitle>
             </div>
-            <DialogDescription>
-              Ajustez le patient, le soin, la durée ou les modalités de règlement.
-            </DialogDescription>
           </DialogHeader>
 
           <div className="overflow-y-auto px-6 py-4 min-h-0 flex-1">
@@ -209,14 +206,9 @@ export function EditConsultationDialog({
               <div className="flex items-center justify-between rounded-lg border border-border/70 bg-muted/20 px-3 py-2">
                 <div className="flex items-center gap-2">
                   <Building2 className="size-4 text-amber-600 dark:text-amber-400" />
-                  <div className="flex flex-col">
-                    <span className="text-xs font-semibold text-foreground">
-                      Consultation en maison de retraite
-                    </span>
-                    <span className="text-[11px] text-muted-foreground">
-                      Flag spécifique pour les résidents d'EHPAD / maison de retraite
-                    </span>
-                  </div>
+                  <span className="text-xs font-semibold text-foreground">
+                    Consultation en maison de retraite
+                  </span>
                 </div>
                 <button
                   type="button"
@@ -315,13 +307,10 @@ export function EditConsultationDialog({
               {/* Section Paiement (Mode unique ou 2 modes mixtes) */}
               <div className="rounded-xl border border-border/70 bg-muted/15 p-3.5 space-y-3">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <div className="space-y-0.5">
+                  <div>
                     <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Modalités de paiement
                     </span>
-                    <p className="text-[11px] text-muted-foreground">
-                      Choisissez un règlement unique ou réparti sur 2 modes.
-                    </p>
                   </div>
                   <div className="inline-flex rounded-lg border border-border/80 p-0.5 bg-muted/50 text-xs shadow-2xs">
                     <button
@@ -512,7 +501,7 @@ export function EditConsultationDialog({
                 {impaye && (
                   <div className="flex items-center gap-2 rounded-lg bg-rose-100/90 dark:bg-rose-900/40 px-3 py-1.5 text-xs font-semibold text-rose-800 dark:text-rose-300">
                     <AlertCircle className="size-4 shrink-0" />
-                    <span>Consultation impayée : le montant ne sera pas décompté dans le calcul total du CA</span>
+                    <span>Montant exclu du CA</span>
                   </div>
                 )}
                 <div className="flex items-center justify-between text-muted-foreground text-xs">
